@@ -18,6 +18,7 @@
       <div class="period">2026.06.23 → 2026.09.23 · 92일 · 12주</div>
     </div>
     <div class="site-header__right">
+      <button class="btn btn--ghost" id="btnGithubSettings" title="GitHub PAT 설정">GitHub 설정</button>
       <button class="btn btn--ghost" id="btnImport" title="JSON 파일 불러오기">데이터 가져오기</button>
       <button class="btn btn--ghost" id="btnExport" title="JSON 파일로 내보내기">데이터 내보내기</button>
       <input type="file" id="fileInput" accept="application/json" hidden>
@@ -62,16 +63,13 @@
     🦞 바닷가재 탈피 완료! 36개 릴스 다 올렸다. 다음 탈피는 측정 데이터로.
   </div>
 
-  <!-- 달력 -->
+  <!-- 달력 (월별 그룹화) -->
   <section class="panel">
     <div class="panel__head">
-      <h2>3개월 업로드 캘린더</h2>
-      <div class="panel__sub">빈 날짜를 누르면 콘텐츠를 추가할 수 있어. 빨간 점은 업로드한 회차.</div>
+      <h2>월별 업로드 캘린더</h2>
+      <div class="panel__sub">빈 날짜를 누르면 콘텐츠를 추가할 수 있어. 빨간 점은 업로드한 회차. 월 헤더 클릭 → 접기/펼치기.</div>
     </div>
-    <div class="cal-weekdays">
-      <div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div><div>일</div>
-    </div>
-    <div class="cal-grid" id="calGrid"></div>
+    <div class="month-list" id="monthList"></div>
     <div class="cal-legend">
       <span><i class="dot dot--accent"></i> 업로드한 회차</span>
       <span><i class="dot dot--today"></i> 오늘</span>
@@ -96,6 +94,17 @@
           <span>날짜</span>
           <input type="date" id="date" required>
         </label>
+        <label class="form__field">
+          <span>카테고리</span>
+          <select id="category">
+            <option value="">(선택)</option>
+            <option value="엄마">엄마</option>
+            <option value="러닝">러닝</option>
+            <option value="키즈">키즈</option>
+            <option value="가치">가치</option>
+            <option value="기타">기타</option>
+          </select>
+        </label>
       </div>
       <label class="form__field">
         <span>제목</span>
@@ -109,6 +118,68 @@
         <span>인스타 링크</span>
         <input type="url" id="link" placeholder="https://www.instagram.com/reel/...">
       </label>
+
+      <!-- 인사이트 입력 (접이식) -->
+      <details class="form-fold">
+        <summary>📊 인스타 인사이트 (선택)</summary>
+        <div class="form__row">
+          <label class="form__field"><span>조회수</span><input type="number" id="iv_views" min="0"></label>
+          <label class="form__field"><span>도달한 계정</span><input type="number" id="iv_reach" min="0"></label>
+          <label class="form__field"><span>평균 조회 시간 (초)</span><input type="number" id="iv_avg" min="0" step="0.1"></label>
+        </div>
+        <div class="form__row">
+          <label class="form__field"><span>좋아요</span><input type="number" id="iv_likes" min="0"></label>
+          <label class="form__field"><span>댓글</span><input type="number" id="iv_comments" min="0"></label>
+          <label class="form__field"><span>리포스트</span><input type="number" id="iv_reposts" min="0"></label>
+        </div>
+        <div class="form__row">
+          <label class="form__field"><span>공유</span><input type="number" id="iv_shares" min="0"></label>
+          <label class="form__field"><span>저장</span><input type="number" id="iv_saves" min="0"></label>
+          <label class="form__field"><span>프로필 방문</span><input type="number" id="iv_profile" min="0"></label>
+          <label class="form__field"><span>팔로우</span><input type="number" id="iv_follows" min="0"></label>
+        </div>
+        <div class="age-grid">
+          <div class="age-grid__label">시청자 연령 분포 (%)</div>
+          <div class="age-grid__row">
+            <label class="form__field"><span>13-17</span><input type="number" id="iv_age_13" min="0" max="100" step="0.1"></label>
+            <label class="form__field"><span>18-24</span><input type="number" id="iv_age_18" min="0" max="100" step="0.1"></label>
+            <label class="form__field"><span>25-34</span><input type="number" id="iv_age_25" min="0" max="100" step="0.1"></label>
+            <label class="form__field"><span>35-44</span><input type="number" id="iv_age_35" min="0" max="100" step="0.1"></label>
+            <label class="form__field"><span>45-54</span><input type="number" id="iv_age_45" min="0" max="100" step="0.1"></label>
+            <label class="form__field"><span>55-64</span><input type="number" id="iv_age_55" min="0" max="100" step="0.1"></label>
+            <label class="form__field"><span>65+</span><input type="number" id="iv_age_65" min="0" max="100" step="0.1"></label>
+          </div>
+        </div>
+        <label class="form__field">
+          <span>인사이트 스크린샷 (이미지 파일)</span>
+          <input type="file" id="iv_screenshot" accept="image/*">
+          <div class="screenshot-preview" id="screenshotPreview"></div>
+        </label>
+      </details>
+
+      <!-- 제작 메타 (접이식) -->
+      <details class="form-fold">
+        <summary>🎬 제작 메타 (선택)</summary>
+        <div class="form__row">
+          <label class="form__field"><span>후킹 문구 (첫 1초)</span><input type="text" id="pr_hook"></label>
+          <label class="form__field"><span>길이 (초)</span><input type="number" id="pr_duration" min="0"></label>
+          <label class="form__field"><span>자막 사용</span>
+            <select id="pr_subtitles"><option value="false">아니오</option><option value="true">예</option></select>
+          </label>
+        </div>
+        <div class="checkbox-group">
+          <span class="checkbox-group__label">사용 푸티지 (다중 선택)</span>
+          <label><input type="checkbox" class="pr_footage" value="정규런"> 정규런</label>
+          <label><input type="checkbox" class="pr_footage" value="엄마챌린지"> 엄마챌린지</label>
+          <label><input type="checkbox" class="pr_footage" value="찻자리"> 찻자리</label>
+          <label><input type="checkbox" class="pr_footage" value="기타"> 기타</label>
+        </div>
+        <div class="form__row">
+          <label class="form__field"><span>사용 음원</span><input type="text" id="pr_music"></label>
+          <label class="form__field"><span>해시태그 (쉼표 구분)</span><input type="text" id="pr_hashtags" placeholder="#엄마러닝, #키즈러닝랩"></label>
+        </div>
+      </details>
+
       <div class="form__actions">
         <button type="submit" class="btn btn--primary" id="btnSave">저장</button>
         <button type="button" class="btn btn--ghost" id="btnReset">초기화</button>
@@ -132,16 +203,93 @@
             <th class="col-num">회차</th>
             <th class="col-date">날짜</th>
             <th>제목</th>
-            <th class="col-memo">메모</th>
+            <th class="col-cat">카테고리</th>
+            <th class="col-num">조회수</th>
+            <th class="col-num">참여율</th>
             <th class="col-link">링크</th>
             <th class="col-act">편집</th>
             <th class="col-act">삭제</th>
           </tr>
         </thead>
         <tbody id="contentTbody">
-          <tr class="empty-row"><td colspan="7">아직 올린 콘텐츠가 없어. 위 폼이나 달력에서 첫 회차를 시작해.</td></tr>
+          <tr class="empty-row"><td colspan="9">아직 올린 콘텐츠가 없어. 위 폼이나 달력에서 첫 회차를 시작해.</td></tr>
         </tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- 인사이트 분석 (Chart.js) -->
+  <section class="panel">
+    <div class="panel__head">
+      <h2>📈 인사이트 분석</h2>
+      <div class="panel__sub">측정 없으면 3개월 후 아무것도 모른다. 회차별 인사이트 입력하면 자동 분석.</div>
+    </div>
+
+    <div class="analytics-tabs">
+      <button class="tab-btn is-active" data-tab="views">조회수 추이</button>
+      <button class="tab-btn" data-tab="engagement">참여율</button>
+      <button class="tab-btn" data-tab="reach">도달률</button>
+      <button class="tab-btn" data-tab="watch">평균 조회 시간</button>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chartLine"></canvas>
+    </div>
+
+    <div class="best-worst">
+      <div class="bw-block">
+        <div class="bw-block__title">🏆 베스트 3 (조회수)</div>
+        <div id="bestList" class="bw-list"></div>
+      </div>
+      <div class="bw-block">
+        <div class="bw-block__title">📉 워스트 3 (조회수)</div>
+        <div id="worstList" class="bw-list"></div>
+      </div>
+    </div>
+
+    <div class="dual-chart">
+      <div class="dual-chart__item">
+        <div class="dual-chart__title">시청자 연령 분포 (평균)</div>
+        <canvas id="chartAge"></canvas>
+      </div>
+      <div class="dual-chart__item">
+        <div class="dual-chart__title">카테고리별 평균 조회수</div>
+        <canvas id="chartCat"></canvas>
+      </div>
+    </div>
+
+    <div class="hook-section">
+      <div class="dual-chart__title">후킹 유형별 성과 (조회수 평균)</div>
+      <div id="hookList" class="bw-list"></div>
+    </div>
+  </section>
+
+  <!-- 참고 영상 라이브러리 -->
+  <section class="panel">
+    <div class="panel__head panel__head--row">
+      <div>
+        <h2>🎬 참고 영상 라이브러리 (벤치마킹)</h2>
+        <div class="panel__sub" id="refCount">0개</div>
+      </div>
+      <div class="ref-controls">
+        <input type="search" class="search" id="refSearch" placeholder="제목 / 대본 / 노트 검색…">
+        <select class="search" id="refSort">
+          <option value="views_desc">조회수 순</option>
+          <option value="created_desc">등록순 (최신)</option>
+          <option value="created_asc">등록순 (오래된)</option>
+        </select>
+        <button class="btn btn--primary" id="btnAddRef">＋ 영상 추가</button>
+      </div>
+    </div>
+    <div class="ref-filters">
+      <button class="filter-btn is-active" data-cat="all">전체</button>
+      <button class="filter-btn" data-cat="엄마">엄마</button>
+      <button class="filter-btn" data-cat="러닝">러닝</button>
+      <button class="filter-btn" data-cat="키즈">키즈</button>
+      <button class="filter-btn" data-cat="가치">가치</button>
+      <button class="filter-btn" data-cat="기타">기타</button>
+    </div>
+    <div class="ref-grid" id="refGrid">
+      <div class="empty-state">아직 참고 영상이 없어. "＋ 영상 추가"로 첫 벤치마크를 등록해봐.</div>
     </div>
   </section>
 
@@ -230,6 +378,127 @@
   </footer>
 </div>
 
+<!-- ============== 모달: 참고 영상 추가/편집 ============== -->
+<div class="modal" id="refModal" hidden>
+  <div class="modal__backdrop" data-close></div>
+  <div class="modal__panel">
+    <div class="modal__head">
+      <h3 id="refModalTitle">참고 영상 추가</h3>
+      <button class="modal__close" data-close>✕</button>
+    </div>
+    <form class="form" id="refForm">
+      <input type="hidden" id="refId">
+      <label class="form__field">
+        <span>제목 *</span>
+        <input type="text" id="refTitle" required placeholder="예: 엄마들도 다 같이 뛰는 새벽 러닝">
+      </label>
+      <div class="form__row">
+        <label class="form__field">
+          <span>영상 URL (인스타/유튜브/Vimeo)</span>
+          <input type="url" id="refSourceUrl" placeholder="https://www.instagram.com/reel/...">
+        </label>
+        <label class="form__field">
+          <span>출처 계정 URL</span>
+          <input type="url" id="refAccountUrl" placeholder="https://www.instagram.com/@user">
+        </label>
+      </div>
+      <div class="form__row">
+        <label class="form__field">
+          <span>조회수 (숫자만)</span>
+          <input type="number" id="refViews" min="0" placeholder="124000">
+        </label>
+      </div>
+      <div class="checkbox-group">
+        <span class="checkbox-group__label">카테고리 (다중 선택)</span>
+        <label><input type="checkbox" class="ref_cat" value="엄마"> 엄마</label>
+        <label><input type="checkbox" class="ref_cat" value="러닝"> 러닝</label>
+        <label><input type="checkbox" class="ref_cat" value="키즈"> 키즈</label>
+        <label><input type="checkbox" class="ref_cat" value="가치"> 가치</label>
+        <label><input type="checkbox" class="ref_cat" value="기타"> 기타</label>
+      </div>
+      <label class="form__field">
+        <span>대본 (펼침)</span>
+        <textarea id="refScript" rows="4" placeholder="영상에 나온 대사·자막 그대로 적기"></textarea>
+      </label>
+      <label class="form__field">
+        <span>내 노트 (왜 좋다고 생각했는지)</span>
+        <textarea id="refNote" rows="3" placeholder="후킹 첫 1초, 푸티지 톤, 가치 메시지 어디가 와닿았는지"></textarea>
+      </label>
+
+      <fieldset class="form-fold-box">
+        <legend>mp4 직접 업로드 (선택 · GitHub PAT 필요)</legend>
+        <div class="upload-row">
+          <input type="file" id="refUploadFile" accept="video/mp4">
+          <button type="button" class="btn btn--ghost" id="btnUploadVideo">업로드</button>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+        <div class="muted" style="font-size:11px;">PAT 설정 후 mp4 선택 → 업로드 → URL 자동 채움. 100MB 미만 권장.</div>
+      </fieldset>
+
+      <div class="form__actions">
+        <button type="submit" class="btn btn--primary">저장</button>
+        <button type="button" class="btn btn--ghost" data-close>취소</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============== 모달: GitHub PAT 설정 ============== -->
+<div class="modal" id="patModal" hidden>
+  <div class="modal__backdrop" data-close></div>
+  <div class="modal__panel">
+    <div class="modal__head">
+      <h3>GitHub PAT 설정</h3>
+      <button class="modal__close" data-close>✕</button>
+    </div>
+    <div class="modal__body">
+      <div class="warn-box">
+        <strong>⚠️ 보안 경고</strong>
+        <ul>
+          <li>토큰은 본인 브라우저 <strong>LocalStorage에만 저장</strong>됩니다.</li>
+          <li><strong>공용 PC 사용 금지.</strong> 외부 서버로 전송되지 않습니다.</li>
+          <li>토큰 권한: <code>repo (contents write)</code> — 영상 파일 업로드용</li>
+          <li>Fine-grained PAT를 권장합니다 (이 repo만 권한).</li>
+        </ul>
+      </div>
+      <p class="muted" style="font-size:12px;">
+        <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">→ GitHub Fine-grained Token 생성하기</a>
+        · Repository: <code>nangmanwife/boundary-dashboard</code> · Permissions: <code>Contents: Read and write</code>
+      </p>
+      <label class="form__field">
+        <span>현재 토큰</span>
+        <input type="text" id="patCurrent" readonly placeholder="(저장된 토큰 없음)">
+      </label>
+      <label class="form__field">
+        <span>새 토큰 입력 (저장 시 덮어쓰기)</span>
+        <input type="password" id="patInput" placeholder="ghp_... 또는 github_pat_...">
+      </label>
+      <div class="form__row">
+        <label class="form__field">
+          <span>업로드 대상 owner</span>
+          <input type="text" id="patOwner" value="nangmanwife">
+        </label>
+        <label class="form__field">
+          <span>업로드 대상 repo</span>
+          <input type="text" id="patRepo" value="boundary-dashboard">
+        </label>
+        <label class="form__field">
+          <span>branch</span>
+          <input type="text" id="patBranch" value="main">
+        </label>
+      </div>
+      <div class="form__actions">
+        <button type="button" class="btn btn--primary" id="btnPatSave">저장</button>
+        <button type="button" class="btn btn--ghost" id="btnPatTest">테스트</button>
+        <button type="button" class="btn btn--danger" id="btnPatDelete">삭제</button>
+      </div>
+      <div class="pat-test-result" id="patTestResult"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
