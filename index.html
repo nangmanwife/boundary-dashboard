@@ -63,6 +63,15 @@
     🦞 바닷가재 탈피 완료! 36개 릴스 다 올렸다. 다음 탈피는 측정 데이터로.
   </div>
 
+  <!-- 인사이트 캡처 알림 영역 -->
+  <section class="alerts-section" id="alertsSection" hidden>
+    <div class="alerts-section__head">
+      <span class="alerts-section__title">⏰ 인사이트 캡처 알림</span>
+      <span class="alerts-section__sub">인스타 인사이트는 게시 후 30일까지만 제공. D+3·D+30 두 번 잡으면 변화가 보임.</span>
+    </div>
+    <div class="alerts-list" id="alertsList"></div>
+  </section>
+
   <!-- 달력 (월별 그룹화) -->
   <section class="panel">
     <div class="panel__head">
@@ -73,6 +82,9 @@
     <div class="cal-legend">
       <span><i class="dot dot--accent"></i> 업로드한 회차</span>
       <span><i class="dot dot--today"></i> 오늘</span>
+      <span><i class="dot dot--d3"></i> D+3 캡처 시점 (미캡처)</span>
+      <span><i class="dot dot--d30"></i> D+30 캡처 시점 (미캡처)</span>
+      <span><i class="dot dot--done"></i> 캡처 완료</span>
       <span><i class="dot dot--out"></i> 기간 외</span>
     </div>
   </section>
@@ -119,42 +131,16 @@
         <input type="url" id="link" placeholder="https://www.instagram.com/reel/...">
       </label>
 
-      <!-- 인사이트 입력 (접이식) -->
-      <details class="form-fold">
-        <summary>📊 인스타 인사이트 (선택)</summary>
-        <div class="form__row">
-          <label class="form__field"><span>조회수</span><input type="number" id="iv_views" min="0"></label>
-          <label class="form__field"><span>도달한 계정</span><input type="number" id="iv_reach" min="0"></label>
-          <label class="form__field"><span>평균 조회 시간 (초)</span><input type="number" id="iv_avg" min="0" step="0.1"></label>
+      <!-- 인사이트 스냅샷 (시점별 누적 기록) -->
+      <details class="form-fold" id="snapshotsFold">
+        <summary>📊 인사이트 스냅샷 <span class="form-fold__count" id="snapshotsCount"></span></summary>
+        <div class="snapshots-hint">
+          💡 인스타 인사이트는 게시 후 <strong>30일까지만 제공</strong>. <strong>D+3</strong>(도달 폭발)·<strong>D+30</strong>(최종) 두 번 잡으면 시간의 변화가 보여. 회차 저장 후 스냅샷 추가 가능.
         </div>
-        <div class="form__row">
-          <label class="form__field"><span>좋아요</span><input type="number" id="iv_likes" min="0"></label>
-          <label class="form__field"><span>댓글</span><input type="number" id="iv_comments" min="0"></label>
-          <label class="form__field"><span>리포스트</span><input type="number" id="iv_reposts" min="0"></label>
+        <div class="snapshots-list" id="snapshotsList"></div>
+        <div class="snapshots-actions">
+          <button type="button" class="btn btn--ghost" id="btnAddSnapshot">＋ 스냅샷 추가</button>
         </div>
-        <div class="form__row">
-          <label class="form__field"><span>공유</span><input type="number" id="iv_shares" min="0"></label>
-          <label class="form__field"><span>저장</span><input type="number" id="iv_saves" min="0"></label>
-          <label class="form__field"><span>프로필 방문</span><input type="number" id="iv_profile" min="0"></label>
-          <label class="form__field"><span>팔로우</span><input type="number" id="iv_follows" min="0"></label>
-        </div>
-        <div class="age-grid">
-          <div class="age-grid__label">시청자 연령 분포 (%)</div>
-          <div class="age-grid__row">
-            <label class="form__field"><span>13-17</span><input type="number" id="iv_age_13" min="0" max="100" step="0.1"></label>
-            <label class="form__field"><span>18-24</span><input type="number" id="iv_age_18" min="0" max="100" step="0.1"></label>
-            <label class="form__field"><span>25-34</span><input type="number" id="iv_age_25" min="0" max="100" step="0.1"></label>
-            <label class="form__field"><span>35-44</span><input type="number" id="iv_age_35" min="0" max="100" step="0.1"></label>
-            <label class="form__field"><span>45-54</span><input type="number" id="iv_age_45" min="0" max="100" step="0.1"></label>
-            <label class="form__field"><span>55-64</span><input type="number" id="iv_age_55" min="0" max="100" step="0.1"></label>
-            <label class="form__field"><span>65+</span><input type="number" id="iv_age_65" min="0" max="100" step="0.1"></label>
-          </div>
-        </div>
-        <label class="form__field">
-          <span>인사이트 스크린샷 (이미지 파일)</span>
-          <input type="file" id="iv_screenshot" accept="image/*">
-          <div class="screenshot-preview" id="screenshotPreview"></div>
-        </label>
       </details>
 
       <!-- 제작 메타 (접이식) -->
@@ -225,6 +211,12 @@
       <div class="panel__sub">측정 없으면 3개월 후 아무것도 모른다. 회차별 인사이트 입력하면 자동 분석.</div>
     </div>
 
+    <div class="analytics-modes">
+      <button class="mode-btn is-active" data-mode="latest">회차별 비교 (최신 스냅샷)</button>
+      <button class="mode-btn" data-mode="snapshot">시점별 비교 (D+N)</button>
+      <button class="mode-btn" data-mode="timeline">시점 추이 (회차 1개)</button>
+    </div>
+    <div class="analytics-mode-controls" id="modeControls"></div>
     <div class="analytics-tabs">
       <button class="tab-btn is-active" data-tab="views">조회수 추이</button>
       <button class="tab-btn" data-tab="engagement">참여율</button>
@@ -494,6 +486,95 @@
       </div>
       <div class="pat-test-result" id="patTestResult"></div>
     </div>
+  </div>
+</div>
+
+<!-- ============== 모달: 인사이트 스냅샷 추가/편집 ============== -->
+<div class="modal" id="snapshotModal" hidden>
+  <div class="modal__backdrop" data-close></div>
+  <div class="modal__panel modal__panel--wide">
+    <div class="modal__head">
+      <h3 id="snapshotModalTitle">스냅샷 추가</h3>
+      <button class="modal__close" data-close>✕</button>
+    </div>
+    <form class="form" id="snapshotForm">
+      <input type="hidden" id="snapContentId">
+      <input type="hidden" id="snapId">
+
+      <div class="snap-context" id="snapContext"></div>
+
+      <div class="form__row">
+        <label class="form__field">
+          <span>시점 라벨 *</span>
+          <select id="snapLabelSelect">
+            <option value="D+1">D+1 (첫 1초 후킹 통했나)</option>
+            <option value="D+3" selected>D+3 (도달 폭발 시점, 90% 확정)</option>
+            <option value="D+7">D+7 (콘텐츠 끈끈함)</option>
+            <option value="D+14">D+14 (중간 점검)</option>
+            <option value="D+30">D+30 (최종, 데이터 사라지기 전)</option>
+            <option value="custom">직접 입력…</option>
+          </select>
+        </label>
+        <label class="form__field" id="snapLabelCustomField" hidden>
+          <span>커스텀 라벨</span>
+          <input type="text" id="snapLabelCustom" placeholder="예: D+5">
+        </label>
+        <label class="form__field">
+          <span>캡처 날짜 *</span>
+          <input type="date" id="snapDate" required>
+        </label>
+        <label class="form__field">
+          <span>D+N (자동)</span>
+          <input type="number" id="snapDaysSince" min="0" readonly>
+        </label>
+      </div>
+
+      <div class="form__row">
+        <label class="form__field"><span>조회수</span><input type="number" id="snv_views" min="0"></label>
+        <label class="form__field"><span>도달한 계정</span><input type="number" id="snv_reach" min="0"></label>
+        <label class="form__field"><span>평균 조회 시간 (초)</span><input type="number" id="snv_avg" min="0" step="0.1"></label>
+      </div>
+      <div class="form__row">
+        <label class="form__field"><span>좋아요</span><input type="number" id="snv_likes" min="0"></label>
+        <label class="form__field"><span>댓글</span><input type="number" id="snv_comments" min="0"></label>
+        <label class="form__field"><span>리포스트</span><input type="number" id="snv_reposts" min="0"></label>
+      </div>
+      <div class="form__row">
+        <label class="form__field"><span>공유</span><input type="number" id="snv_shares" min="0"></label>
+        <label class="form__field"><span>저장</span><input type="number" id="snv_saves" min="0"></label>
+        <label class="form__field"><span>프로필 방문</span><input type="number" id="snv_profile" min="0"></label>
+        <label class="form__field"><span>팔로우</span><input type="number" id="snv_follows" min="0"></label>
+      </div>
+
+      <div class="age-grid">
+        <div class="age-grid__label">시청자 연령 분포 (%)</div>
+        <div class="age-grid__row">
+          <label class="form__field"><span>13-17</span><input type="number" id="snv_age_13" min="0" max="100" step="0.1"></label>
+          <label class="form__field"><span>18-24</span><input type="number" id="snv_age_18" min="0" max="100" step="0.1"></label>
+          <label class="form__field"><span>25-34</span><input type="number" id="snv_age_25" min="0" max="100" step="0.1"></label>
+          <label class="form__field"><span>35-44</span><input type="number" id="snv_age_35" min="0" max="100" step="0.1"></label>
+          <label class="form__field"><span>45-54</span><input type="number" id="snv_age_45" min="0" max="100" step="0.1"></label>
+          <label class="form__field"><span>55-64</span><input type="number" id="snv_age_55" min="0" max="100" step="0.1"></label>
+          <label class="form__field"><span>65+</span><input type="number" id="snv_age_65" min="0" max="100" step="0.1"></label>
+        </div>
+      </div>
+
+      <label class="form__field">
+        <span>인사이트 스크린샷 (이미지 파일)</span>
+        <input type="file" id="snv_screenshot" accept="image/*">
+        <div class="screenshot-preview" id="snapScreenshotPreview"></div>
+      </label>
+
+      <label class="form__field">
+        <span>노트 (선택)</span>
+        <textarea id="snv_note" rows="2" placeholder="이 시점에 인상적이었던 점, 다음에 시도할 변형 등"></textarea>
+      </label>
+
+      <div class="form__actions">
+        <button type="submit" class="btn btn--primary">스냅샷 저장</button>
+        <button type="button" class="btn btn--ghost" data-close>취소</button>
+      </div>
+    </form>
   </div>
 </div>
 

@@ -1,6 +1,6 @@
 /* =========================================================
    박지영의 3개월 바운더리 — 키즈러닝랩
-   v2: 월별 캘린더 + 참고 영상 + 인사이트 트래킹 + 분석 차트
+   v3: 인사이트 스냅샷 (시점별 누적) + D+3/D+30 알림 + 캘린더 마커 확장
    ========================================================= */
 
 (() => {
@@ -39,7 +39,11 @@
     refSort: 'views_desc',
     refSearch: '',
     chartTab: 'views',
-    screenshotData: '',             // 임시 base64 (콘텐츠 폼)
+    chartMode: 'latest',            // 'latest' | 'snapshot' | 'timeline'
+    chartModeLabel: 'D+3',          // snapshot 모드용
+    chartModeEpisode: null,         // timeline 모드용 (content id)
+    screenshotData: '',             // 임시 base64 (콘텐츠 폼 — 더 이상 사용 X, 호환용)
+    snapshotScreenshotData: '',     // 스냅샷 모달용
     refCheckedCats: new Set()
   };
 
@@ -96,10 +100,45 @@
     return String(n);
   };
 
+  // ===== 시점/스냅샷 유틸 =====
+  const ageInDays = (postedDateStr, refDate) => {
+    // 게시일로부터 며칠 지났는지 (오늘 = 0). 음수 가능 (미래 게시).
+    if (!postedDateStr) return 0;
+    const posted = parseDate(postedDateStr);
+    const ref = refDate || today();
+    return daysBetween(posted, ref);
+  };
+  const labelFromDays = (n) => `D+${n}`;
+  const dateFromOffset = (postedDateStr, days) => {
+    if (!postedDateStr) return '';
+    const d = parseDate(postedDateStr);
+    d.setDate(d.getDate() + Number(days || 0));
+    return fmtDate(d);
+  };
+  const labelDaysMap = { 'D+1': 1, 'D+3': 3, 'D+7': 7, 'D+14': 14, 'D+30': 30 };
+
+  // 회차의 최신 스냅샷 (= D+N 가장 큼)
+  const latestSnapshot = (c) => {
+    const arr = c?.insights_snapshots || [];
+    if (!arr.length) return null;
+    return [...arr].sort((a, b) =>
+      (Number(b.days_since_post) || 0) - (Number(a.days_since_post) || 0)
+    )[0];
+  };
+  // 특정 라벨의 스냅샷
+  const snapshotByLabel = (c, label) => {
+    return (c?.insights_snapshots || []).find(s => s.label === label) || null;
+  };
+  // 차트·테이블이 쓰는 "대표 인사이트" — 최신 스냅샷의 지표
+  const effectiveInsights = (c) => {
+    const snap = latestSnapshot(c);
+    return snap || c?.insights || null;
+  };
+
   // ===== 마이그레이션 / 저장 / 로드 =====
   const migrateContent = (c) => {
     // 기존 필드 + 새 필드 기본값
-    return {
+    const out = {
       id: c.id || uuid(),
       episode: c.episode,
       date: c.date,
@@ -108,8 +147,47 @@
       link: c.link || '',
       category: c.category || '',
       insights: c.insights || {},
-      production: c.production || {}
+      insights_snapshots: Array.isArray(c.insights_snapshots) ? c.insights_snapshots : [],
+      production: c.production || {},
+      dismissed_alerts: Array.isArray(c.dismissed_alerts) ? c.dismissed_alerts : []
     };
+
+    // 기존 insights 단일 객체 → snapshots[0]로 마이그레이션 (스냅샷이 비어있고 데이터가 있을 때만)
+    const iv = out.insights || {};
+    const hasOldData = iv && Object.keys(iv).some(k => {
+      const v = iv[k];
+      return v !== undefined && v !== null && v !== '' &&
+        !(typeof v === 'object' && !Object.keys(v).length);
+    });
+    if (out.insights_snapshots.length === 0 && hasOldData) {
+      const migrated = {
+        id: uuid(),
+        snapshot_date: out.date || fmtDate(today()),
+        days_since_post: 0,
+        label: '마이그레이션',
+        views: iv.views,
+        reach: iv.reach,
+        avg_watch_seconds: iv.avg_watch_seconds,
+        likes: iv.likes,
+        comments: iv.comments,
+        reposts: iv.reposts,
+        shares: iv.shares,
+        saves: iv.saves,
+        profile_visits: iv.profile_visits,
+        follows: iv.follows,
+        age_dist: iv.age_dist || {},
+        screenshot_url: iv.screenshot_url || '',
+        note: '기존 단일 인사이트에서 자동 이관됨'
+      };
+      out.insights_snapshots.push(migrated);
+      console.log(`[migrate] #${out.episode || '?'} "${out.title}" — 단일 인사이트 → 스냅샷 1개로 이관`);
+    }
+
+    // 스냅샷 정렬 (D+N 오름차순)
+    out.insights_snapshots.sort((a, b) =>
+      (Number(a.days_since_post) || 0) - (Number(b.days_since_post) || 0)
+    );
+    return out;
   };
   const migrateRef = (r) => ({
     id: r.id || uuid(),
@@ -129,10 +207,16 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        state.contents = (Array.isArray(parsed.contents) ? parsed.contents : []).map(migrateContent);
+        const rawContents = Array.isArray(parsed.contents) ? parsed.contents : [];
+        console.log(`[load] LocalStorage에서 ${rawContents.length}개 회차 로드 중…`);
+        state.contents = rawContents.map(migrateContent);
+        const totalSnaps = state.contents.reduce((s, c) => s + (c.insights_snapshots?.length || 0), 0);
+        console.log(`[load] 총 ${totalSnaps}개 인사이트 스냅샷 (마이그레이션 포함)`);
         state.weekly_metrics = Array.isArray(parsed.weekly_metrics) ? parsed.weekly_metrics : [];
         state.refs = (Array.isArray(parsed.refs) ? parsed.refs : []).map(migrateRef);
         state.settings = parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {};
+      } else {
+        console.log('[load] 저장된 데이터 없음 — 새로 시작');
       }
     } catch (e) {
       console.warn('LocalStorage load failed:', e);
@@ -227,19 +311,20 @@
       const year = Number(yStr);
       const monthIdx = Number(mStr) - 1;
 
-      // 월간 KPI
+      // 월간 KPI — 각 회차의 최신 스냅샷 기준
       const monthContents = contentsForMonth(monthKey);
       const upCount = monthContents.length;
-      const views = monthContents.map(c => Number(c.insights?.views) || 0).filter(v => v > 0);
+      const monthIV = monthContents.map(c => effectiveInsights(c));
+      const views = monthIV.map(iv => Number(iv?.views) || 0).filter(v => v > 0);
       const avgViews = views.length ? Math.round(views.reduce((a, b) => a + b, 0) / views.length) : 0;
-      const engRates = monthContents
-        .map(c => {
-          const v = Number(c.insights?.views) || 0;
+      const engRates = monthIV
+        .map(iv => {
+          const v = Number(iv?.views) || 0;
           if (v === 0) return null;
-          const eng = (Number(c.insights?.likes) || 0) +
-            (Number(c.insights?.comments) || 0) +
-            (Number(c.insights?.shares) || 0) +
-            (Number(c.insights?.saves) || 0);
+          const eng = (Number(iv?.likes) || 0) +
+            (Number(iv?.comments) || 0) +
+            (Number(iv?.shares) || 0) +
+            (Number(iv?.saves) || 0);
           return (eng / v) * 100;
         })
         .filter(x => x !== null);
@@ -284,6 +369,20 @@
       const byDate = new Map();
       state.contents.forEach(c => byDate.set(c.date, c));
 
+      // 시점 마커 인덱스: 날짜 → [{content, label}]
+      // D+3 / D+30 시점 (게시일 + 3 / + 30)
+      const markersByDate = new Map();
+      state.contents.forEach(c => {
+        if (!c.date) return;
+        [['D+3', 3], ['D+30', 30]].forEach(([label, n]) => {
+          const ds = dateFromOffset(c.date, n);
+          if (!ds) return;
+          const arr = markersByDate.get(ds) || [];
+          arr.push({ content: c, label, days: n });
+          markersByDate.set(ds, arr);
+        });
+      });
+
       for (let i = 0; i < totalCells; i++) {
         const d = new Date(gridStart);
         d.setDate(gridStart.getDate() + i);
@@ -295,7 +394,6 @@
 
         const cell = document.createElement('div');
         cell.className = 'cal-cell';
-        // 기간 외 또는 이번 월 외 → 비활성
         if (!inPeriod || !inMonth) cell.classList.add('cal-cell--out');
         if (isToday && inPeriod && inMonth) cell.classList.add('cal-cell--today');
         if (upload && inMonth) cell.classList.add('cal-cell--done');
@@ -303,13 +401,34 @@
         if (inPeriod && inMonth) {
           const label = `${d.getMonth() + 1}/${d.getDate()}`;
           const ep = upload ? `#${upload.episode}` : '';
+
+          // 시점 마커 도트 (D+3 / D+30 / 완료)
+          const markers = markersByDate.get(ds) || [];
+          const dotsHTML = markers.map(mk => {
+            const captured = !!snapshotByLabel(mk.content, mk.label);
+            const cls = captured ? 'cal-dot--done' : (mk.label === 'D+3' ? 'cal-dot--d3' : 'cal-dot--d30');
+            const title = `#${mk.content.episode} ${mk.label}${captured ? ' (완료)' : ' (미캡처)'}`;
+            return `<span class="cal-dot ${cls}" data-cdot data-cid="${mk.content.id}" data-clabel="${mk.label}" title="${escapeAttr(title)}"></span>`;
+          }).join('');
+
           cell.innerHTML = `
             <div class="cal-cell__day">${label}</div>
             <div class="cal-cell__ep">${ep}</div>
+            ${dotsHTML ? `<div class="cal-cell__dots">${dotsHTML}</div>` : ''}
           `;
           cell.title = upload
             ? `#${upload.episode} ${upload.title}`
             : `${ds} — 클릭하면 콘텐츠 추가`;
+
+          // 도트 클릭 → 해당 회차 편집 + 스냅샷 모달
+          cell.querySelectorAll('[data-cdot]').forEach(dot => {
+            dot.addEventListener('click', (e) => {
+              e.stopPropagation();
+              editContent(dot.dataset.cid, { openSnapshot: true, preselectLabel: dot.dataset.clabel });
+            });
+          });
+
+          // 셀 클릭 (도트 외)
           cell.addEventListener('click', () => {
             if (upload) editContent(upload.id);
             else prefillForm(ds);
@@ -334,15 +453,6 @@
     return Math.min(TARGET_REELS, max + 1);
   };
 
-  const resetInsightFields = () => {
-    ['iv_views', 'iv_reach', 'iv_avg', 'iv_likes', 'iv_comments', 'iv_reposts',
-     'iv_shares', 'iv_saves', 'iv_profile', 'iv_follows',
-     'iv_age_13', 'iv_age_18', 'iv_age_25', 'iv_age_35', 'iv_age_45', 'iv_age_55', 'iv_age_65'
-    ].forEach(id => $('#' + id).value = '');
-    ui.screenshotData = '';
-    $('#screenshotPreview').innerHTML = '';
-    $('#iv_screenshot').value = '';
-  };
   const resetProductionFields = () => {
     $('#pr_hook').value = '';
     $('#pr_duration').value = '';
@@ -360,15 +470,15 @@
     $('#memo').value = '';
     $('#link').value = '';
     $('#category').value = '';
-    resetInsightFields();
     resetProductionFields();
+    renderSnapshotsList(null);  // 신규 회차 → 빈 리스트
     $('#formTitle').textContent = '콘텐츠 추가';
     $('#btnSave').textContent = '저장';
     $('#title').focus();
     $('#contentForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const editContent = (id) => {
+  const editContent = (id, opts = {}) => {
     const c = state.contents.find(x => x.id === id);
     if (!c) return;
     $('#contentId').value = c.id;
@@ -379,30 +489,8 @@
     $('#link').value = c.link || '';
     $('#category').value = c.category || '';
 
-    // 인사이트 채우기
-    const iv = c.insights || {};
-    $('#iv_views').value = iv.views ?? '';
-    $('#iv_reach').value = iv.reach ?? '';
-    $('#iv_avg').value = iv.avg_watch_seconds ?? '';
-    $('#iv_likes').value = iv.likes ?? '';
-    $('#iv_comments').value = iv.comments ?? '';
-    $('#iv_reposts').value = iv.reposts ?? '';
-    $('#iv_shares').value = iv.shares ?? '';
-    $('#iv_saves').value = iv.saves ?? '';
-    $('#iv_profile').value = iv.profile_visits ?? '';
-    $('#iv_follows').value = iv.follows ?? '';
-    const age = iv.age_dist || {};
-    $('#iv_age_13').value = age['13-17'] ?? '';
-    $('#iv_age_18').value = age['18-24'] ?? '';
-    $('#iv_age_25').value = age['25-34'] ?? '';
-    $('#iv_age_35').value = age['35-44'] ?? '';
-    $('#iv_age_45').value = age['45-54'] ?? '';
-    $('#iv_age_55').value = age['55-64'] ?? '';
-    $('#iv_age_65').value = age['65+'] ?? '';
-    ui.screenshotData = iv.screenshot_url || '';
-    $('#screenshotPreview').innerHTML = ui.screenshotData
-      ? `<img src="${escapeAttr(ui.screenshotData)}" alt="인사이트 스크린샷">`
-      : '';
+    // 스냅샷 리스트 렌더
+    renderSnapshotsList(c);
 
     // 제작 메타 채우기
     const pr = c.production || {};
@@ -418,6 +506,12 @@
     $('#formTitle').textContent = `#${c.episode} 편집`;
     $('#btnSave').textContent = '수정 저장';
     $('#contentForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // 자동으로 스냅샷 모달 열기 (알림/캘린더 도트 클릭 시)
+    if (opts.openSnapshot) {
+      $('#snapshotsFold').open = true;
+      setTimeout(() => openSnapshotModal(c.id, null, opts.preselectLabel || ''), 80);
+    }
   };
 
   const deleteContent = (id) => {
@@ -427,38 +521,6 @@
     state.contents = state.contents.filter(x => x.id !== id);
     save();
     renderAll();
-  };
-
-  // 폼 → 인사이트 객체
-  const collectInsights = () => {
-    const num = (id) => {
-      const v = $('#' + id).value;
-      return v === '' ? undefined : Number(v);
-    };
-    const age_dist = {};
-    [['13-17', 'iv_age_13'], ['18-24', 'iv_age_18'], ['25-34', 'iv_age_25'],
-     ['35-44', 'iv_age_35'], ['45-54', 'iv_age_45'], ['55-64', 'iv_age_55'],
-     ['65+', 'iv_age_65']].forEach(([k, id]) => {
-      const v = num(id);
-      if (v !== undefined) age_dist[k] = v;
-    });
-    const obj = {
-      views: num('iv_views'),
-      reach: num('iv_reach'),
-      avg_watch_seconds: num('iv_avg'),
-      likes: num('iv_likes'),
-      comments: num('iv_comments'),
-      reposts: num('iv_reposts'),
-      shares: num('iv_shares'),
-      saves: num('iv_saves'),
-      profile_visits: num('iv_profile'),
-      follows: num('iv_follows')
-    };
-    if (Object.keys(age_dist).length) obj.age_dist = age_dist;
-    if (ui.screenshotData) obj.screenshot_url = ui.screenshotData;
-    // undefined 제거
-    Object.keys(obj).forEach(k => obj[k] === undefined && delete obj[k]);
-    return obj;
   };
 
   const collectProduction = () => {
@@ -489,19 +551,28 @@
     const memo = $('#memo').value.trim();
     const link = $('#link').value.trim();
     const category = $('#category').value;
-    const insights = collectInsights();
     const production = collectProduction();
 
     if (!ep || !date || !title) return;
 
     if (id) {
       const c = state.contents.find(x => x.id === id);
-      if (c) Object.assign(c, { episode: ep, date, title, memo, link, category, insights, production });
+      if (c) {
+        // 게시일 변경 시 모든 스냅샷의 days_since_post 재계산
+        const dateChanged = c.date !== date;
+        Object.assign(c, { episode: ep, date, title, memo, link, category, production });
+        if (dateChanged) {
+          (c.insights_snapshots || []).forEach(s => {
+            if (s.snapshot_date) s.days_since_post = daysBetween(parseDate(date), parseDate(s.snapshot_date));
+          });
+        }
+      }
     } else {
       const dup = state.contents.find(x => Number(x.episode) === ep);
       if (dup && !confirm(`#${ep}이 이미 있어. 새로 추가할래? (덮어쓰지 않음)`)) return;
       state.contents.push({
-        id: uuid(), episode: ep, date, title, memo, link, category, insights, production
+        id: uuid(), episode: ep, date, title, memo, link, category,
+        insights: {}, insights_snapshots: [], production, dismissed_alerts: []
       });
     }
     save();
@@ -509,19 +580,19 @@
     prefillForm();
   };
 
-  // ===== 스크린샷 압축 & 저장 =====
-  const handleScreenshotPick = async (file) => {
+  // ===== 스크린샷 압축 & 저장 (스냅샷 모달용) =====
+  const handleSnapshotScreenshotPick = async (file) => {
     if (!file) return;
     try {
       const compressed = await compressImage(file, 800, 0.82);
-      ui.screenshotData = compressed;
-      $('#screenshotPreview').innerHTML = `<img src="${escapeAttr(compressed)}" alt="인사이트 스크린샷">`;
+      ui.snapshotScreenshotData = compressed;
+      $('#snapScreenshotPreview').innerHTML = `<img src="${escapeAttr(compressed)}" alt="스냅샷 스크린샷">`;
     } catch (err) {
       console.warn('이미지 압축 실패, 원본 base64 사용:', err);
       const reader = new FileReader();
       reader.onload = (e) => {
-        ui.screenshotData = e.target.result;
-        $('#screenshotPreview').innerHTML = `<img src="${escapeAttr(ui.screenshotData)}" alt="인사이트 스크린샷">`;
+        ui.snapshotScreenshotData = e.target.result;
+        $('#snapScreenshotPreview').innerHTML = `<img src="${escapeAttr(ui.snapshotScreenshotData)}" alt="스냅샷 스크린샷">`;
       };
       reader.readAsDataURL(file);
     }
@@ -548,6 +619,370 @@
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
+    });
+  };
+
+  // ===== 인사이트 스냅샷 — 리스트 / 모달 / CRUD =====
+  const snapshotLabelClass = (label) => {
+    const m = String(label || '').match(/^D\+(\d+)$/);
+    if (!m) return '';
+    const n = m[1];
+    return `snapshot-row__label--D${n}`;
+  };
+
+  const renderSnapshotsList = (c) => {
+    const root = $('#snapshotsList');
+    const countEl = $('#snapshotsCount');
+    if (!c) {
+      root.innerHTML = '';
+      countEl.textContent = '';
+      $('#btnAddSnapshot').disabled = true;
+      $('#btnAddSnapshot').title = '회차를 먼저 저장하면 스냅샷을 추가할 수 있어';
+      return;
+    }
+    $('#btnAddSnapshot').disabled = false;
+    $('#btnAddSnapshot').title = '';
+    const arr = [...(c.insights_snapshots || [])].sort((a, b) =>
+      (Number(a.days_since_post) || 0) - (Number(b.days_since_post) || 0)
+    );
+    countEl.textContent = arr.length ? `(${arr.length}개)` : '';
+    if (!arr.length) { root.innerHTML = ''; return; }
+    root.innerHTML = arr.map(s => {
+      const cls = snapshotLabelClass(s.label);
+      const views = s.views !== undefined && s.views !== null && s.views !== ''
+        ? fmtViews(s.views) : '—';
+      return `
+        <div class="snapshot-row">
+          <span class="snapshot-row__label ${cls}">${escapeHTML(s.label || `D+${s.days_since_post || 0}`)}</span>
+          <span class="snapshot-row__date">${escapeHTML(s.snapshot_date || '')}</span>
+          <span class="snapshot-row__views">${views}<span class="muted-num">조회</span></span>
+          <span class="snapshot-row__actions">
+            <button type="button" class="btn btn--mini btn--ghost" data-snap-edit="${s.id}">편집</button>
+            <button type="button" class="btn btn--mini btn--danger" data-snap-del="${s.id}">삭제</button>
+          </span>
+        </div>
+      `;
+    }).join('');
+    root.querySelectorAll('[data-snap-edit]').forEach(b => {
+      b.addEventListener('click', () => openSnapshotModal(c.id, b.dataset.snapEdit));
+    });
+    root.querySelectorAll('[data-snap-del]').forEach(b => {
+      b.addEventListener('click', () => deleteSnapshot(c.id, b.dataset.snapDel));
+    });
+  };
+
+  const fillSnapshotFields = (snap) => {
+    const v = (id, val) => $('#' + id).value = (val === undefined || val === null) ? '' : val;
+    v('snv_views', snap?.views);
+    v('snv_reach', snap?.reach);
+    v('snv_avg', snap?.avg_watch_seconds);
+    v('snv_likes', snap?.likes);
+    v('snv_comments', snap?.comments);
+    v('snv_reposts', snap?.reposts);
+    v('snv_shares', snap?.shares);
+    v('snv_saves', snap?.saves);
+    v('snv_profile', snap?.profile_visits);
+    v('snv_follows', snap?.follows);
+    const age = snap?.age_dist || {};
+    v('snv_age_13', age['13-17']);
+    v('snv_age_18', age['18-24']);
+    v('snv_age_25', age['25-34']);
+    v('snv_age_35', age['35-44']);
+    v('snv_age_45', age['45-54']);
+    v('snv_age_55', age['55-64']);
+    v('snv_age_65', age['65+']);
+    v('snv_note', snap?.note || '');
+    ui.snapshotScreenshotData = snap?.screenshot_url || '';
+    $('#snapScreenshotPreview').innerHTML = ui.snapshotScreenshotData
+      ? `<img src="${escapeAttr(ui.snapshotScreenshotData)}" alt="스냅샷 스크린샷">`
+      : '';
+    $('#snv_screenshot').value = '';
+  };
+
+  const openSnapshotModal = (contentId, snapId, preselectLabel) => {
+    const c = state.contents.find(x => x.id === contentId);
+    if (!c) return;
+    $('#snapshotModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+    $('#snapContentId').value = contentId;
+    $('#snapId').value = snapId || '';
+
+    // 컨텍스트 안내
+    const age = ageInDays(c.date);
+    $('#snapContext').innerHTML = `
+      <strong>#${escapeHTML(String(c.episode))} ${escapeHTML(c.title)}</strong>
+      <div class="muted">게시일 ${escapeHTML(c.date)} · 오늘 기준 D+${age}</div>
+    `;
+
+    if (snapId) {
+      const snap = (c.insights_snapshots || []).find(s => s.id === snapId);
+      $('#snapshotModalTitle').textContent = `스냅샷 편집 — ${snap?.label || ''}`;
+      // 라벨 / 날짜 세팅
+      const presetLabels = ['D+1', 'D+3', 'D+7', 'D+14', 'D+30'];
+      if (snap && presetLabels.includes(snap.label)) {
+        $('#snapLabelSelect').value = snap.label;
+        $('#snapLabelCustomField').hidden = true;
+      } else {
+        $('#snapLabelSelect').value = 'custom';
+        $('#snapLabelCustomField').hidden = false;
+        $('#snapLabelCustom').value = snap?.label || '';
+      }
+      $('#snapDate').value = snap?.snapshot_date || dateFromOffset(c.date, snap?.days_since_post || 0);
+      $('#snapDaysSince').value = snap?.days_since_post ?? '';
+      fillSnapshotFields(snap);
+    } else {
+      $('#snapshotModalTitle').textContent = '스냅샷 추가';
+      // preselect: 'D+3' / 'D+30' 등
+      const label = preselectLabel && labelDaysMap[preselectLabel] !== undefined ? preselectLabel : 'D+3';
+      $('#snapLabelSelect').value = label;
+      $('#snapLabelCustomField').hidden = true;
+      const days = labelDaysMap[label];
+      $('#snapDate').value = dateFromOffset(c.date, days);
+      $('#snapDaysSince').value = days;
+      fillSnapshotFields(null);
+    }
+    syncSnapshotLabelDate();
+  };
+
+  const closeSnapshotModal = () => {
+    $('#snapshotModal').hidden = true;
+    document.body.style.overflow = '';
+    ui.snapshotScreenshotData = '';
+  };
+
+  // 라벨/날짜 양방향 동기화
+  const syncSnapshotLabelDate = () => {
+    const sel = $('#snapLabelSelect').value;
+    const customField = $('#snapLabelCustomField');
+    if (sel === 'custom') {
+      customField.hidden = false;
+    } else {
+      customField.hidden = true;
+    }
+    // 라벨 → D+N 자동 계산
+    if (sel !== 'custom' && labelDaysMap[sel] !== undefined) {
+      const contentId = $('#snapContentId').value;
+      const c = state.contents.find(x => x.id === contentId);
+      if (c) {
+        const days = labelDaysMap[sel];
+        $('#snapDate').value = dateFromOffset(c.date, days);
+        $('#snapDaysSince').value = days;
+      }
+    }
+  };
+
+  // 날짜 직접 변경 → D+N 재계산
+  const onSnapDateChange = () => {
+    const contentId = $('#snapContentId').value;
+    const c = state.contents.find(x => x.id === contentId);
+    const dateStr = $('#snapDate').value;
+    if (!c || !dateStr) return;
+    const days = daysBetween(parseDate(c.date), parseDate(dateStr));
+    $('#snapDaysSince').value = days;
+    // 라벨 자동 매칭
+    const matched = Object.entries(labelDaysMap).find(([, d]) => d === days);
+    if (matched) {
+      $('#snapLabelSelect').value = matched[0];
+      $('#snapLabelCustomField').hidden = true;
+    } else {
+      // 현재 라벨 그대로 두되, custom이면 그대로
+      const cur = $('#snapLabelSelect').value;
+      if (cur !== 'custom') {
+        $('#snapLabelSelect').value = 'custom';
+        $('#snapLabelCustomField').hidden = false;
+        $('#snapLabelCustom').value = labelFromDays(days);
+      }
+    }
+  };
+
+  const submitSnapshot = (e) => {
+    e.preventDefault();
+    const contentId = $('#snapContentId').value;
+    const snapId = $('#snapId').value;
+    const c = state.contents.find(x => x.id === contentId);
+    if (!c) { closeSnapshotModal(); return; }
+
+    const labelSel = $('#snapLabelSelect').value;
+    const label = labelSel === 'custom' ? ($('#snapLabelCustom').value.trim() || `D+${$('#snapDaysSince').value || 0}`) : labelSel;
+    const snapshot_date = $('#snapDate').value;
+    if (!snapshot_date) { alert('캡처 날짜를 입력해.'); return; }
+    const days_since_post = daysBetween(parseDate(c.date), parseDate(snapshot_date));
+
+    const num = (id) => {
+      const v = $('#' + id).value;
+      return v === '' ? undefined : Number(v);
+    };
+    const age_dist = {};
+    [['13-17', 'snv_age_13'], ['18-24', 'snv_age_18'], ['25-34', 'snv_age_25'],
+     ['35-44', 'snv_age_35'], ['45-54', 'snv_age_45'], ['55-64', 'snv_age_55'],
+     ['65+', 'snv_age_65']].forEach(([k, id]) => {
+      const v = num(id);
+      if (v !== undefined) age_dist[k] = v;
+    });
+
+    const payload = {
+      label,
+      snapshot_date,
+      days_since_post,
+      views: num('snv_views'),
+      reach: num('snv_reach'),
+      avg_watch_seconds: num('snv_avg'),
+      likes: num('snv_likes'),
+      comments: num('snv_comments'),
+      reposts: num('snv_reposts'),
+      shares: num('snv_shares'),
+      saves: num('snv_saves'),
+      profile_visits: num('snv_profile'),
+      follows: num('snv_follows'),
+      age_dist,
+      screenshot_url: ui.snapshotScreenshotData || '',
+      note: $('#snv_note').value.trim()
+    };
+    Object.keys(payload).forEach(k => {
+      if (payload[k] === undefined) delete payload[k];
+    });
+
+    c.insights_snapshots = c.insights_snapshots || [];
+    if (snapId) {
+      const s = c.insights_snapshots.find(x => x.id === snapId);
+      if (s) Object.assign(s, payload, { id: s.id });
+    } else {
+      c.insights_snapshots.push({ id: uuid(), ...payload });
+    }
+    // 정렬
+    c.insights_snapshots.sort((a, b) =>
+      (Number(a.days_since_post) || 0) - (Number(b.days_since_post) || 0)
+    );
+
+    save();
+    closeSnapshotModal();
+    renderSnapshotsList(c);
+    renderAll();
+  };
+
+  const deleteSnapshot = (contentId, snapId) => {
+    const c = state.contents.find(x => x.id === contentId);
+    if (!c) return;
+    const s = (c.insights_snapshots || []).find(x => x.id === snapId);
+    if (!s) return;
+    if (!confirm(`${s.label || `D+${s.days_since_post}`} 스냅샷 삭제할래?`)) return;
+    c.insights_snapshots = c.insights_snapshots.filter(x => x.id !== snapId);
+    save();
+    renderSnapshotsList(c);
+    renderAll();
+  };
+
+  // ===== 인사이트 캡처 알림 =====
+  // 각 회차마다: 어떤 알림 타입이 활성인지 계산
+  // 타입: 'd3', 'd28', 'd30', 'lost'
+  const computeAlerts = () => {
+    const out = [];
+    state.contents.forEach(c => {
+      const age = ageInDays(c.date);
+      if (age < 1) return;  // 게시 안 했거나 D+0 (아직 데이터 없음)
+      const dismissed = new Set(c.dismissed_alerts || []);
+      const hasD3 = !!snapshotByLabel(c, 'D+3');
+      const hasD30 = !!snapshotByLabel(c, 'D+30');
+
+      // D+3 시점: 1~6일 (게시 후 1~6, D+3 스냅샷 없을 때) — D+3 임박~지났을 때
+      if (age >= 1 && age <= 6 && !hasD3 && !dismissed.has('d3')) {
+        out.push({
+          type: 'd3', contentId: c.id, episode: c.episode, title: c.title,
+          age, label: 'D+3', sort: 1
+        });
+      }
+      // D+30 임박: 27~29일
+      if (age >= 27 && age <= 29 && !hasD30 && !dismissed.has('d30')) {
+        out.push({
+          type: 'd28', contentId: c.id, episode: c.episode, title: c.title,
+          age, label: 'D+30', sort: 2
+        });
+      }
+      // D+30 당일
+      if (age === 30 && !hasD30 && !dismissed.has('d30')) {
+        out.push({
+          type: 'd30', contentId: c.id, episode: c.episode, title: c.title,
+          age, label: 'D+30', sort: 0  // 가장 위
+        });
+      }
+      // 손실 (31일+ 인데 D+30 없음)
+      if (age > 30 && !hasD30 && !dismissed.has('d30_lost')) {
+        out.push({
+          type: 'lost', contentId: c.id, episode: c.episode, title: c.title,
+          age, label: 'D+30', sort: 3
+        });
+      }
+    });
+    // 정렬: type 우선순위 → age 큰 순 (급한 거 위로)
+    out.sort((a, b) => a.sort - b.sort || b.age - a.age);
+    return out;
+  };
+
+  const renderAlerts = () => {
+    const alerts = computeAlerts();
+    const section = $('#alertsSection');
+    const list = $('#alertsList');
+    if (!alerts.length) {
+      section.hidden = true;
+      list.innerHTML = '';
+      return;
+    }
+    section.hidden = false;
+    list.innerHTML = alerts.map(a => {
+      let icon = '', headLabel = '', title = '', sub = '';
+      if (a.type === 'd3') {
+        icon = '🔵'; headLabel = 'D+3 캡처 시점';
+        title = `#${a.episode} — D+3 캡처 시점이에요`;
+        sub = `오늘 D+${a.age} · 게시 후 1~3일 데이터가 가장 가치 있어요`;
+      } else if (a.type === 'd28') {
+        icon = '🟡'; headLabel = `D+${a.age}`;
+        title = `⚠️ #${a.episode} — D+30까지 ${30 - a.age}일 남음`;
+        sub = `30일 지나면 인스타에서 데이터가 영구히 사라져요`;
+      } else if (a.type === 'd30') {
+        icon = '🚨'; headLabel = 'D+30 당일';
+        title = `🚨 #${a.episode} — 오늘 마지막! 캡처 필수`;
+        sub = `내일이면 데이터 사라짐`;
+      } else if (a.type === 'lost') {
+        icon = '⚫'; headLabel = `D+${a.age}`;
+        title = `#${a.episode} — D+30 못 잡음 (데이터 손실 가능)`;
+        sub = `최신 가능한 스냅샷이라도 잡아두기`;
+      }
+      return `
+        <div class="alert-card alert-card--${a.type}" data-content="${a.contentId}" data-label="${a.label}">
+          <button class="alert-card__dismiss" data-dismiss-alert="${a.contentId}" data-dismiss-type="${a.type}" title="이 알림 무시">✕</button>
+          <div class="alert-card__head">${icon} ${escapeHTML(headLabel)}</div>
+          <div class="alert-card__title">${escapeHTML(title)}</div>
+          <div class="alert-card__sub">${escapeHTML(sub)}</div>
+        </div>
+      `;
+    }).join('');
+
+    // 카드 클릭 → 편집 + 스냅샷 모달
+    list.querySelectorAll('.alert-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('[data-dismiss-alert]')) return;
+        const cid = card.dataset.content;
+        const label = card.dataset.label;
+        editContent(cid, { openSnapshot: true, preselectLabel: label });
+      });
+    });
+    list.querySelectorAll('[data-dismiss-alert]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cid = btn.dataset.dismissAlert;
+        const type = btn.dataset.dismissType;
+        const c = state.contents.find(x => x.id === cid);
+        if (!c) return;
+        c.dismissed_alerts = c.dismissed_alerts || [];
+        // type → dismiss key
+        let key = '';
+        if (type === 'd3') key = 'd3';
+        else if (type === 'd28' || type === 'd30') key = 'd30';
+        else if (type === 'lost') key = 'd30_lost';
+        if (key && !c.dismissed_alerts.includes(key)) c.dismissed_alerts.push(key);
+        save();
+        renderAlerts();
+      });
     });
   };
 
@@ -582,8 +1017,9 @@
     }
 
     tbody.innerHTML = rows.map(c => {
-      const v = c.insights?.views;
-      const er = engRate(c.insights);
+      const iv = effectiveInsights(c);
+      const v = iv?.views;
+      const er = engRate(iv);
       return `
       <tr>
         <td class="col-num"><span class="ep-badge">${escapeHTML(String(c.episode))}</span></td>
@@ -608,56 +1044,135 @@
   };
 
   // ===== 인사이트 분석 (Chart.js) =====
+  // 회차에서 사용할 "지표 객체" — 모드별로 다름
+  const getMetricFor = (c, mode) => {
+    if (mode === 'latest') return latestSnapshot(c) || (c.insights && c.insights.views !== undefined ? c.insights : null);
+    if (mode === 'snapshot') return snapshotByLabel(c, ui.chartModeLabel);
+    return null;
+  };
+
+  const valueFromInsight = (iv, tab) => {
+    if (!iv) return null;
+    if (tab === 'views') return Number(iv.views) || 0;
+    if (tab === 'engagement') {
+      const er = engRate(iv);
+      return er === null ? 0 : Number(er.toFixed(1));
+    }
+    if (tab === 'reach') {
+      const v = Number(iv.views) || 0;
+      const r = Number(iv.reach) || 0;
+      if (v === 0) return 0;
+      return Number(((r / v) * 100).toFixed(1));
+    }
+    if (tab === 'watch') return Number(iv.avg_watch_seconds) || 0;
+    return 0;
+  };
+
+  const tabAxisLabel = (tab) => ({
+    views: '조회수',
+    engagement: '참여율 (%)',
+    reach: '도달률 (도달/조회 %)',
+    watch: '평균 조회 시간 (초)'
+  }[tab] || '');
+
   const renderAnalytics = () => {
     if (typeof Chart === 'undefined') return;
-    const sorted = [...state.contents]
-      .filter(c => c.insights && c.insights.views !== undefined)
-      .sort((a, b) => Number(a.episode) - Number(b.episode));
-
-    renderLineChart(sorted);
-    renderBestWorst(sorted);
+    renderModeControls();
+    renderLineChart();
+    renderBestWorst();
     renderAgeChart();
     renderCategoryChart();
     renderHookList();
   };
 
-  const renderLineChart = (sorted) => {
+  // 모드별 추가 컨트롤 (스냅샷 라벨 선택 / 회차 선택)
+  const renderModeControls = () => {
+    const root = $('#modeControls');
+    if (ui.chartMode === 'snapshot') {
+      // 사용 가능한 라벨 자동 수집 (D+1, D+3, D+7, D+14, D+30 중 데이터 있는 것)
+      const available = new Set();
+      state.contents.forEach(c => {
+        (c.insights_snapshots || []).forEach(s => {
+          if (s.label) available.add(s.label);
+        });
+      });
+      const baseLabels = ['D+1', 'D+3', 'D+7', 'D+14', 'D+30'];
+      const labels = baseLabels.filter(l => available.has(l));
+      [...available].forEach(l => { if (!baseLabels.includes(l)) labels.push(l); });
+      if (!labels.length) labels.push('D+3');
+      if (!labels.includes(ui.chartModeLabel)) ui.chartModeLabel = labels[0];
+      root.innerHTML = `
+        <label>시점:</label>
+        <select id="modeSnapshotLabel">
+          ${labels.map(l => `<option value="${escapeAttr(l)}" ${l === ui.chartModeLabel ? 'selected' : ''}>${escapeHTML(l)}</option>`).join('')}
+        </select>
+      `;
+      $('#modeSnapshotLabel').addEventListener('change', (e) => {
+        ui.chartModeLabel = e.target.value;
+        renderLineChart();
+        renderBestWorst();
+      });
+    } else if (ui.chartMode === 'timeline') {
+      const eligible = state.contents.filter(c => (c.insights_snapshots || []).length > 0);
+      if (!eligible.length) {
+        root.innerHTML = `<span class="muted" style="font-size:12px;">스냅샷이 있는 회차가 아직 없어. 먼저 회차에 스냅샷을 추가해.</span>`;
+        return;
+      }
+      if (!ui.chartModeEpisode || !eligible.find(c => c.id === ui.chartModeEpisode)) {
+        ui.chartModeEpisode = eligible[0].id;
+      }
+      root.innerHTML = `
+        <label>회차:</label>
+        <select id="modeEpisode">
+          ${eligible.sort((a, b) => Number(a.episode) - Number(b.episode)).map(c =>
+            `<option value="${escapeAttr(c.id)}" ${c.id === ui.chartModeEpisode ? 'selected' : ''}>#${c.episode} ${escapeHTML(c.title)}</option>`
+          ).join('')}
+        </select>
+      `;
+      $('#modeEpisode').addEventListener('change', (e) => {
+        ui.chartModeEpisode = e.target.value;
+        renderLineChart();
+      });
+    } else {
+      root.innerHTML = '';
+    }
+  };
+
+  const renderLineChart = () => {
     const canvas = $('#chartLine');
     if (!canvas) return;
     if (charts.line) { charts.line.destroy(); charts.line = null; }
 
-    let label = '조회수';
+    let labels = [];
     let data = [];
-    if (ui.chartTab === 'views') {
-      data = sorted.map(c => Number(c.insights.views) || 0);
-      label = '조회수';
-    } else if (ui.chartTab === 'engagement') {
-      data = sorted.map(c => {
-        const er = engRate(c.insights);
-        return er === null ? 0 : Number(er.toFixed(1));
-      });
-      label = '참여율 (%)';
-    } else if (ui.chartTab === 'reach') {
-      data = sorted.map(c => {
-        const v = Number(c.insights.views) || 0;
-        const r = Number(c.insights.reach) || 0;
-        if (v === 0) return 0;
-        return Number(((r / v) * 100).toFixed(1));
-      });
-      label = '도달률 (도달/조회 %)';
-    } else if (ui.chartTab === 'watch') {
-      data = sorted.map(c => Number(c.insights.avg_watch_seconds) || 0);
-      label = '평균 조회 시간 (초)';
-    }
+    let datasetLabel = tabAxisLabel(ui.chartTab);
 
-    const labels = sorted.map(c => `#${c.episode}`);
+    if (ui.chartMode === 'timeline') {
+      const c = state.contents.find(x => x.id === ui.chartModeEpisode);
+      if (!c) return;
+      const snaps = [...(c.insights_snapshots || [])].sort((a, b) =>
+        (Number(a.days_since_post) || 0) - (Number(b.days_since_post) || 0)
+      );
+      labels = snaps.map(s => s.label || `D+${s.days_since_post || 0}`);
+      data = snaps.map(s => valueFromInsight(s, ui.chartTab));
+      datasetLabel = `#${c.episode} — ${datasetLabel}`;
+    } else {
+      const eligible = [...state.contents]
+        .filter(c => {
+          const iv = getMetricFor(c, ui.chartMode);
+          return iv && iv.views !== undefined && iv.views !== null && iv.views !== '';
+        })
+        .sort((a, b) => Number(a.episode) - Number(b.episode));
+      labels = eligible.map(c => `#${c.episode}`);
+      data = eligible.map(c => valueFromInsight(getMetricFor(c, ui.chartMode), ui.chartTab));
+    }
 
     charts.line = new Chart(canvas, {
       type: 'line',
       data: {
         labels,
         datasets: [{
-          label,
+          label: datasetLabel,
           data,
           borderColor: CHART_COLORS.accent,
           backgroundColor: CHART_COLORS.accentSoft,
@@ -687,16 +1202,36 @@
     });
   };
 
-  const renderBestWorst = (sorted) => {
-    const byViews = [...sorted].sort((a, b) => (Number(b.insights.views) || 0) - (Number(a.insights.views) || 0));
+  const renderBestWorst = () => {
+    // 모드별: latest / snapshot 기준 최신 또는 해당 시점
+    let eligible = [];
+    if (ui.chartMode === 'timeline') {
+      const c = state.contents.find(x => x.id === ui.chartModeEpisode);
+      if (c) {
+        eligible = (c.insights_snapshots || []).map(s => ({
+          episode: `${c.episode} (${s.label || 'D+' + (s.days_since_post || 0)})`,
+          title: c.title,
+          views: Number(s.views) || 0
+        }));
+      }
+    } else {
+      eligible = state.contents
+        .map(c => {
+          const iv = getMetricFor(c, ui.chartMode);
+          if (!iv) return null;
+          return { episode: c.episode, title: c.title, views: Number(iv.views) || 0 };
+        })
+        .filter(x => x && x.views > 0);
+    }
+    const byViews = [...eligible].sort((a, b) => b.views - a.views);
     const best = byViews.slice(0, 3);
     const worst = byViews.slice(-3).reverse();
     const render = (arr) => {
       if (arr.length === 0) return '<div class="muted" style="font-size:11.5px;">데이터 없음</div>';
       return arr.map(c => `
         <div class="bw-row">
-          <div class="bw-row__title">#${c.episode} ${escapeHTML(c.title)}</div>
-          <div class="bw-row__num">${fmtViews(c.insights.views)}</div>
+          <div class="bw-row__title">#${escapeHTML(String(c.episode))} ${escapeHTML(c.title)}</div>
+          <div class="bw-row__num">${fmtViews(c.views)}</div>
         </div>
       `).join('');
     };
@@ -712,7 +1247,8 @@
     const sums = Object.fromEntries(buckets.map(k => [k, 0]));
     const counts = Object.fromEntries(buckets.map(k => [k, 0]));
     state.contents.forEach(c => {
-      const age = c.insights?.age_dist;
+      const iv = effectiveInsights(c);
+      const age = iv?.age_dist;
       if (!age) return;
       buckets.forEach(k => {
         if (age[k] !== undefined && age[k] !== null && age[k] !== '') {
@@ -764,7 +1300,8 @@
     const counts = Object.fromEntries(CATEGORIES.map(k => [k, 0]));
     state.contents.forEach(c => {
       if (!c.category) return;
-      const v = Number(c.insights?.views);
+      const iv = effectiveInsights(c);
+      const v = Number(iv?.views);
       if (!v || v <= 0) return;
       if (sums[c.category] === undefined) return;
       sums[c.category] += v;
@@ -804,7 +1341,8 @@
     const groups = {};
     state.contents.forEach(c => {
       const hook = (c.production?.hook || '').trim();
-      const v = Number(c.insights?.views) || 0;
+      const iv = effectiveInsights(c);
+      const v = Number(iv?.views) || 0;
       if (!hook || v <= 0) return;
       const key = hook.length > 24 ? hook.slice(0, 24) + '…' : hook;
       if (!groups[key]) groups[key] = { sum: 0, count: 0 };
@@ -1239,9 +1777,11 @@
         state.weekly_metrics = data.weekly_metrics.map(m => ({ id: m.id || uuid(), ...m }));
         state.refs = Array.isArray(data.refs) ? data.refs.map(migrateRef) : [];
         state.settings = data.settings && typeof data.settings === 'object' ? data.settings : (state.settings || {});
+        const totalSnaps = state.contents.reduce((s, c) => s + (c.insights_snapshots?.length || 0), 0);
+        console.log(`[import] ${state.contents.length}개 회차, ${totalSnaps}개 스냅샷 (자동 마이그레이션 포함)`);
         save();
         renderAll();
-        alert('가져오기 완료.');
+        alert(`가져오기 완료. 회차 ${state.contents.length}개, 스냅샷 ${totalSnaps}개.`);
       } catch (err) {
         alert('JSON 파싱 실패: ' + err.message);
       }
@@ -1252,6 +1792,7 @@
   // ===== 전체 렌더 =====
   const renderAll = () => {
     renderKPI();
+    renderAlerts();
     renderCalendar();
     renderTable();
     renderMetricTable();
@@ -1276,9 +1817,24 @@
     // 콘텐츠 폼
     $('#contentForm').addEventListener('submit', submitContent);
     $('#btnReset').addEventListener('click', () => prefillForm(fmtDate(today())));
-    $('#iv_screenshot').addEventListener('change', (e) => {
+
+    // 스냅샷 추가 버튼 (현재 편집 중인 회차 기준)
+    $('#btnAddSnapshot').addEventListener('click', () => {
+      const cid = $('#contentId').value;
+      if (!cid) {
+        alert('회차를 먼저 저장한 다음 스냅샷을 추가할 수 있어.');
+        return;
+      }
+      openSnapshotModal(cid, null);
+    });
+
+    // 스냅샷 모달
+    $('#snapshotForm').addEventListener('submit', submitSnapshot);
+    $('#snapLabelSelect').addEventListener('change', syncSnapshotLabelDate);
+    $('#snapDate').addEventListener('change', onSnapDateChange);
+    $('#snv_screenshot').addEventListener('change', (e) => {
       const f = e.target.files[0];
-      if (f) handleScreenshotPick(f);
+      if (f) handleSnapshotScreenshotPick(f);
     });
 
     // 측정 폼
@@ -1307,6 +1863,16 @@
       });
     });
 
+    // 분석 모드
+    $$('.analytics-modes .mode-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        $$('.analytics-modes .mode-btn').forEach(x => x.classList.remove('is-active'));
+        b.classList.add('is-active');
+        ui.chartMode = b.dataset.mode;
+        renderAnalytics();
+      });
+    });
+
     // 참고 영상
     $('#btnAddRef').addEventListener('click', () => openRefModal(null));
     $('#refForm').addEventListener('submit', submitRef);
@@ -1331,9 +1897,12 @@
     // 모달 닫기
     $$('[data-close]').forEach(el => {
       el.addEventListener('click', (e) => {
-        // backdrop이나 닫기 버튼만
         const modal = el.closest('.modal');
-        if (modal) modal.hidden = true;
+        if (modal) {
+          modal.hidden = true;
+          // 스냅샷 모달이면 임시 상태 비움
+          if (modal.id === 'snapshotModal') ui.snapshotScreenshotData = '';
+        }
         document.body.style.overflow = '';
       });
     });
