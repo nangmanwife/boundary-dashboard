@@ -85,6 +85,14 @@
   })[c]);
   const escapeAttr = (s) => escapeHTML(s);
 
+  // 인스타 릴스/게시물 URL → 임베드 URL (토큰 없이 iframe 재생)
+  // 지원: /reel/{code} · /p/{code} · /tv/{code}  (쿼리스트링·끝슬래시 허용)
+  const instaEmbedUrl = (link) => {
+    if (!link) return null;
+    const m = String(link).match(/instagram\.com\/(?:reel|p|tv)\/([A-Za-z0-9_-]+)/);
+    return m ? `https://www.instagram.com/reel/${m[1]}/embed` : null;
+  };
+
   // 조회수 포맷: 12400 → "1.2만", 1240000 → "124만", 1.2M 형식 옵션
   const fmtViews = (n) => {
     n = Number(n) || 0;
@@ -1020,6 +1028,12 @@
       const iv = effectiveInsights(c);
       const v = iv?.views;
       const er = engRate(iv);
+      const embed = instaEmbedUrl(c.link);
+      const linkCell = c.link
+        ? `<a href="${escapeAttr(c.link)}" target="_blank" rel="noopener">열기</a>${
+            embed ? ` <button class="btn btn--mini btn--ghost" data-video="${c.id}">▶ 영상</button>` : ''
+          }`
+        : '—';
       return `
       <tr>
         <td class="col-num"><span class="ep-badge">${escapeHTML(String(c.episode))}</span></td>
@@ -1028,10 +1042,13 @@
         <td class="col-cat">${c.category ? `<span class="cat-tag">${escapeHTML(c.category)}</span>` : '—'}</td>
         <td class="col-num">${v !== undefined && v !== null && v !== '' ? fmtViews(v) : '—'}</td>
         <td class="col-num">${er !== null ? er.toFixed(1) + '%' : '—'}</td>
-        <td class="col-link">${c.link ? `<a href="${escapeAttr(c.link)}" target="_blank" rel="noopener">열기</a>` : '—'}</td>
+        <td class="col-link">${linkCell}</td>
         <td class="col-act"><button class="btn btn--mini btn--ghost" data-edit="${c.id}">편집</button></td>
         <td class="col-act"><button class="btn btn--mini btn--danger" data-del="${c.id}">삭제</button></td>
       </tr>
+      ${embed ? `<tr class="embed-row" data-embed-for="${c.id}" hidden>
+        <td colspan="9"><div class="insta-embed"><iframe src="${escapeAttr(embed)}" loading="lazy" allowfullscreen scrolling="no" frameborder="0"></iframe></div></td>
+      </tr>` : ''}
     `;
     }).join('');
 
@@ -1040,6 +1057,15 @@
     });
     tbody.querySelectorAll('[data-del]').forEach(b => {
       b.addEventListener('click', () => deleteContent(b.dataset.del));
+    });
+    tbody.querySelectorAll('[data-video]').forEach(b => {
+      b.addEventListener('click', () => {
+        const row = tbody.querySelector(`.embed-row[data-embed-for="${b.dataset.video}"]`);
+        if (!row) return;
+        const open = !row.hidden;
+        row.hidden = open;
+        b.textContent = open ? '▶ 영상' : '▼ 닫기';
+      });
     });
   };
 
